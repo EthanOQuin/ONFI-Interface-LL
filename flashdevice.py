@@ -7,6 +7,9 @@ import sys
 import traceback
 from pyftdi import ftdi
 import flashdevice_defs
+import utils
+from matplotlib import pyplot
+import csv
 
 class IO:
     def __init__(self, do_slow = False, debug = 0, simulation_mode = False):
@@ -52,7 +55,7 @@ class IO:
                 self.ftdi.write_data(Array('B', [ftdi.Ftdi.SET_BITS_HIGH, 0x0, 0x1]))
 
         self.__wait_ready()
-        
+
         if not self.__get_id():
             print(f"E: Unable to read the device information")
             sys.exit(-1)
@@ -112,7 +115,7 @@ class IO:
             cmd_type |= flashdevice_defs.ADR_WP
 
         cmds += [ftdi.Ftdi.WRITE_EXTENDED, cmd_type, 0, ord(data[0])]
-        
+
         for i in range(1, len(data), 1):
             #if i == 256:
             #    cmds += [Ftdi.WRITE_SHORT, 0, ord(data[i])]
@@ -452,7 +455,49 @@ class IO:
         page_no_to_read = blockno*self.PagePerBlock+pageno
         return self.read_page(page_no_to_read,remove_oob)
 
-    # 
+    def read_block(self, blockno, remove_oob = False, comparison_file="", compare_per_page=False):
+        """Return data stored in all pages in specified block, computing the bit error rate if a comparison input is specified."""
+        bytes_read = []
+
+        # Prepare to write BER report if required
+        if comparison_file:
+            cf = open(comparison_file,'rb')
+            comparison_input = cf.read()
+            cf.close()
+
+            output_file = open(self.IDString.rstrip()  + "_BER.txt", "w")
+
+            page_offset = 0
+
+        # Begin processing pages
+        for pageno in range(0, self.PagePerBlock, 1):
+            page_read = self.read_page_from_block(pageno, blockno, remove_oob)
+
+            bytes_read += page_read
+
+            if comparison_file:
+                ber = 0.0
+
+                if remove_oob:
+                    page_offset += self.PageSize
+                else:
+                    page_offset += self.PageSize + self.OOBSize
+
+                if compare_per_page:
+                    read_offset = 0
+                else:
+                    read_offset = page_offset
+
+                for idx,each_byte in enumerate(page_read):
+                    if(compare_per_page and each_byte != comparison_input[idx + read_offset]):
+                        ber += 1
+
+                ber /= len(page_read)
+
+                output_file.write(f"{blockno},{pageno},{ber}\n")
+
+        return bytes_read
+
     def read_seq(self, pageno, remove_oob = False, raw_mode = False):
         page = []
         self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
@@ -572,6 +617,44 @@ class IO:
     def write_page_in_a_block(self, pageno, block_idx, data):
         page_no_to_write = (block_idx*self.PagePerBlock)+pageno
         return self.write_page(page_no_to_write,data)
+
+    def write_all_pages_in_a_block(self, block_idx):
+        """Writes random data to all pages in specified block and then compares data written to data intended to be written."""
+        random_data = utils.create_array("zeros", self.PageSize, filename="random_input.bin")
+        input_data = "".join(map(chr, random_data))
+
+        self.write_block(block_idx, input_data, per_page=True)
+
+        self.read_block(block_idx, remove_oob=True, comparison_file="random_input.bin", compare_per_page=True)
+
+        pages=[]
+        ber=[]
+
+        with open(self.IDString.rstrip() + "_BER.txt", "r") as error_data:
+            plot = csv.reader(error_data, delimiter=",")
+            for row in plot:
+                pages.append(row[1])
+                ber.append(row[2])
+
+        pyplot.plot(pages,ber)
+        pyplot.xlabel("Page")
+        pyplot.ylabel("Block Error Rate")
+        pyplot.title("BER per Page")
+        pyplot.show()
+
+    def write_block(self, block_idx, data, per_page=False):
+        """Writes data to entire block. If per_page is true, writes the same data to each page, otherwise each page gets the corresponding section of the input data."""
+        page_offset = self.PageSize + self.PagePerBlock
+
+        for i in range(self.PagePerBlock):
+            if per_page:
+                err = self.write_page_in_a_block(i, block_idx, data[i])
+            else:
+                err = self.write_page_in_a_block(i, block_idx, data[page_offset * i:page_offset * (i + 1)])
+            if err:
+                return err
+
+        return err
 
     def write_pages(self, filename, offset = 0, start_page = -1, end_page = -1, add_oob = False, add_jffs2_eraser_marker = False, raw_mode = False):
         fd = open(filename, 'rb')
