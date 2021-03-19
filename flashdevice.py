@@ -718,7 +718,7 @@ class IO:
         page_no_to_write = (block_idx*self.PagePerBlock)+pageno
         return self.write_page(page_no_to_write,data)
 
-    def write_all_pages_in_a_block(self, block_idx):
+    def write_block_get_ber(self, block_idx):
         """Writes random data to all pages in specified block and then compares data written to data intended to be written."""
         random_data = utils.create_array("zeros", self.PageSize, filename="random_input.bin")
         input_data = "".join(map(chr, random_data))
