@@ -720,7 +720,7 @@ class IO:
 
     def write_block_get_ber(self, block_idx):
         """Writes random data to all pages in specified block and then compares data written to data intended to be written."""
-        random_data = utils.create_array("zeros", self.PageSize, filename="random_input.bin")
+        random_data = utils.create_array("random", self.PageSize, filename="random_input.bin")
         input_data = "".join(map(chr, random_data))
 
         self.write_block(block_idx, input_data, per_page=True)
